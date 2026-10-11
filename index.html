@@ -267,6 +267,10 @@ img{display:block;-webkit-user-drag:none;user-select:none}
 #btn-add.pulse,.sh-close.pulse,#btn-close.pulse{animation:btnPulse 300ms var(--ease-out)}
 .toast{position:absolute;left:50%;bottom:34px;width:max-content;max-width:330px;padding:13px 20px;border-radius:24px;background:#2c2c2e;box-shadow:inset 0 0 0 1px rgba(255,255,255,.09),0 10px 30px rgba(0,0,0,.5);font-size:15px;line-height:19px;text-align:center;z-index:80;opacity:0;transform:translate(-50%,16px);pointer-events:none;transition:opacity 220ms ease,transform 320ms var(--ease-out)}
 .toast.on{opacity:1;transform:translate(-50%,0)}
+/* celular: toques rápidos sem zoom/atraso e segurar o cartão sem abrir menu da imagem */
+#phone,#card{touch-action:manipulation}
+#card,#card *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+#card img{pointer-events:none;-webkit-user-drag:none}
 </style>
 </head>
 <body>
@@ -465,7 +469,7 @@ img{display:block;-webkit-user-drag:none;user-select:none}
     </div>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <input type="file" accept="image/*" id="photo-in" hidden>
+  <input type="file" accept="image/*" id="photo-in" tabindex="-1" aria-hidden="true" style="position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none">
 </main>
 <script>
 (() => {
@@ -527,11 +531,19 @@ img{display:block;-webkit-user-drag:none;user-select:none}
     } else if (e.type === 'pointerup' && photoUnlocked() && performance.now() - dragT0 >= HOLD_MS && phone.dataset.state === 'home') {
       swallowClick = true;                          // segurou sem arrastar: abre a troca de foto
       setTimeout(() => { swallowClick = false; }, 400);
-      photoIn.click();
+      openPicker();
     }
   };
   card.addEventListener('pointerup', endDrag);
   card.addEventListener('pointercancel', endDrag);
+  card.addEventListener('contextmenu', (e) => e.preventDefault());
+  let holdT;
+  card.addEventListener('pointerdown', () => {
+    clearTimeout(holdT);
+    if (!photoUnlocked()) return;
+    holdT = setTimeout(() => { if (dragId !== null && !dragMoved) { toast('Solte para escolher a foto'); try { navigator.vibrate && navigator.vibrate(15); } catch (_) {} } }, HOLD_MS);
+  });
+  ['pointerup', 'pointercancel', 'pointermove'].forEach((t) => card.addEventListener(t, () => { if (t !== 'pointermove' || dragMoved) clearTimeout(holdT); }));
 
   /* ---------- Segredo: 15 toques seguidos na tela liberam a troca da foto do cartão ----------
      Depois de liberado (fica salvo), é só segurar o cartão por ~0,6 s para escolher outra foto. */
@@ -542,6 +554,14 @@ img{display:block;-webkit-user-drag:none;user-select:none}
     set: (k, v) => { try { localStorage.setItem(k, v); return true; } catch (_) { return false; } }
   };
   const photoUnlocked = () => store.get('cardPhotoUnlocked') === '1';
+  let pickerAt = 0;
+  const openPicker = () => {
+    const now = performance.now();
+    if (now - pickerAt < 800) return;               // evita abrir duas vezes (pointerup + click)
+    pickerAt = now;
+    try { photoIn.click(); }
+    catch (_) { try { photoIn.showPicker(); } catch (__) { toast('Não foi possível abrir a galeria'); } }
+  };
   let toastT;
   const toast = (msg) => {
     toastEl.textContent = msg; toastEl.classList.add('on');
@@ -564,13 +584,12 @@ img{display:block;-webkit-user-drag:none;user-select:none}
     const first = !photoUnlocked();
     store.set('cardPhotoUnlocked', '1');
     toast(first ? 'Troca de foto liberada! Segure o cartão para trocar a foto.' : 'Escolha a nova foto do cartão');
-    photoIn.click();
+    openPicker();
   }, true);
 
   // recorta no formato do cartão (353×221) e reduz, pra caber no armazenamento
   photoIn.addEventListener('change', () => {
     const file = photoIn.files && photoIn.files[0];
-    photoIn.value = '';
     if (!file) return;
     const url = URL.createObjectURL(file), img = new Image();
     img.onload = () => {
@@ -580,12 +599,12 @@ img{display:block;-webkit-user-drag:none;user-select:none}
       const w = img.naturalWidth * k, h = img.naturalHeight * k;
       const g = c.getContext('2d');
       g.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(url); photoIn.value = '';
       const out = c.toDataURL('image/jpeg', .9);
       setCardPhoto(out);
       toast(store.set('cardPhoto', out) ? 'Foto do cartão atualizada' : 'Foto atualizada (não foi possível salvar)');
     };
-    img.onerror = () => { URL.revokeObjectURL(url); toast('Não foi possível abrir essa imagem'); };
+    img.onerror = () => { URL.revokeObjectURL(url); photoIn.value = ''; toast('Não foi possível abrir essa imagem'); };
     img.src = url;
   });
 
